@@ -1,7 +1,7 @@
 # UniAli v1.0-alpha - main branch
 ![](Images/logo.png)
 
-Это спонтанная попытка примотать легковесную Alibaba LLM к UWP. Пока не взлетело. Из сорцов (папка Assets) свою тестовую модель model_quantized.onnx удалил, ибо весит она под гиг. Если кому интересно повозиться с этим делом, сами залогинтесь а ХаггингФейсе и качните что-то типа https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX . Майковская тензор-библиоека, так понял, возмущается моим кривым токенайзером. Ну да, к каждой модели, так понял, лучше его делать как следует. Возможно, стоит посмотреть нутро https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/blob/main/tokenizer.json и вообще всё то, что лежит в папке https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/tree/main . Как то так.
+Это спонтанная попытка примотать легковесную Alibaba LLM к UWP. Пока не взлетело. Из сорцов (папка Assets) свою тестовую модель model_quantized.onnx удалил, ибо весит она под гиг. Если кому интересно повозиться с этим делом, сами залогинтесь а ХаггингФейсе и качните что-то типа https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX . [Майковская LM-шарманка](https://github.com/microsoft/onnxruntime), так понял, возмущается моим кривым токенайзером. Ну да, к каждой модели, наверное, лучше его делать как следует. Возможно, стоит посмотреть нутро https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/blob/main/tokenizer.json и вообще всё то, что лежит в папке https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX/tree/main . Как то так.
 
 
 ## Скриншот
@@ -93,6 +93,8 @@ private string GenerateResponse(string input)
 - Товарищу Deleted с форума 4PDA за предложение создать эту шарманку для старых добрых винфонов
 - https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX Где-то тут водятся творения от энтузиастов и Ali-бабы
 - https://4pda.to/forum/index.php?showtopic=1107793#entry138245556 Собственно мой случайный диалог c Deleted тут.
+- https://github.com/microsoft/onnxruntime ONNX Runtime: кросс-платформенный суперпупернавороченный ML-аксселератор/тренер ML-моделей
+- 
 
 ## ..
 AS IS. RnD only. No support. DIY
