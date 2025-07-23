@@ -88,9 +88,11 @@ private string GenerateResponse(string input)
 
 ## Заключение
 Прототип UniAli демонстрирует возможность запуска современных языковых моделей на устаревших мобильных устройствах с помощью оптимизированных фреймворков и квантованных моделей. Это открывает новые возможности для использования ИИ на устройствах, которые больше не получают официальных обновлений.
+
 ## Credits / Reference(s)
-- https://github.com/ahmed605  Ahmed Walid aka ahmed605
-- https://github.com/ahmed605/Reborn-Zune Reborn-Zune, the original project
+- Товарищу Deleted с форума 4PDA за предложение создать эту шарманку для старых добрых винфонов
+- https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX Где-то тут водятся творения от энтузиастов и Ali-бабы
+- https://4pda.to/forum/index.php?showtopic=1107793#entry138245556 Собственно мой случайный диалог c Deleted тут.
 
 ## ..
 AS IS. RnD only. No support. DIY
