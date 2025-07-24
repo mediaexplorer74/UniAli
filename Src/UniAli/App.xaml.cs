@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.ApplicationModel;
-using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Windows.UI.Xaml;
@@ -14,24 +12,55 @@ using Windows.UI.Xaml.Data;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Navigation;
+using Windows.ApplicationModel;
+using Windows.ApplicationModel.Activation;
+using Microsoft.ML.OnnxRuntime;
+using System.Diagnostics;
 
 namespace UniAli
 {
-    /// <summary>
-    /// Provides application-specific behavior to supplement the default Application class.
-    /// </summary>
     sealed partial class App : Application
     {
-        /// <summary>
-        /// Initializes the singleton application object.  This is the first line of authored code
-        /// executed, and as such is the logical equivalent of main() or WinMain().
-        /// </summary>
+        public static InferenceSession Session { get; private set; }
+
         public App()
         {
             this.InitializeComponent();
             this.Suspending += OnSuspending;
+            InitOnnxRuntime();
         }
 
+        private async void InitOnnxRuntime()
+        {
+            try
+            {
+                var modelFile = await Package.Current.InstalledLocation.GetFileAsync
+                    (
+                    //@"Assets\qwen1.5-1.7B-q4f16.ort"
+                    //@"Assets\alibaba-model.onnx"
+                     @"Assets\model_q4f16.onnx"
+                    );
+                
+                var sessionOptions = new SessionOptions
+                {
+                    ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+                    GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC,
+                    EnableCpuMemArena = true
+                };
+                
+                // Для ARMv8 оптимизация
+                sessionOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
+                
+                Session = new InferenceSession(modelFile.Path, sessionOptions);
+            }
+            catch (Exception ex)
+            {
+                // Обработка ошибок
+                Debug.WriteLine("[ex] App exception: " + ex.Message);
+            }
+        }
+
+        
         /// <summary>
         /// Invoked when the application is launched normally by the end user.  Other entry points
         /// will be used such as when the application is launched to open a specific file.

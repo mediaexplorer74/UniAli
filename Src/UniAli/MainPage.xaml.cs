@@ -1,161 +1,201 @@
+﻿using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.ApplicationModel;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
+using System.Threading.Tasks;
+using TiktokenSharp;
+using Windows.UI;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Controls.Primitives;
-using Windows.UI.Xaml.Data;
-using Windows.UI.Xaml.Input;
-using Windows.UI.Xaml.Media;
-using Windows.UI.Xaml.Navigation;
-
-// The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
 namespace UniAli
 {
-
     public sealed partial class MainPage : Page
     {
-        private InferenceSession _session;
+        public bool IsInputEnabled => !IsGenerating;
+        private bool IsGenerating = false;
 
-        //private Tokenizer _tokenizer;
-        private BertTokenizer _tokenizer;
+        private readonly List<(string, bool)> _messages = new List<(string, bool)>();
+        private TikToken _tokenizer;
+        private CanvasTextLayout _textLayout;
 
-        // MainPage
         public MainPage()
         {
             this.InitializeComponent();
-            InitializeModel();
+            Loaded += MainPage_Loaded;
         }
 
-
-        private async void InitializeModel()
+        private async void MainPage_Loaded(object sender, RoutedEventArgs e)
         {
             try
             {
-                // Путь к модели в папке Assets
-                var modelPath = Path.Combine(Package.Current.InstalledLocation.Path, "Assets", "model_quantized.onnx");
-
-                // Создаем сессию ONNX Runtime
-                _session = new InferenceSession(modelPath);
-
-                // Инициализация токенизатора (упрощенная версия)
-                // В реальном приложении нужно загрузить токенизатор из файлов модели
-
-                var vocab = new Dictionary<string, long>();
-
-                /*vocab.Add("[PAD]", 100); // Padding token, used to fill sequences to a fixed length.
-                vocab.Add("[UNK]", 101); // Unknown token, used for out-of-vocabulary words
-                vocab.Add("[CLS]", 102); // Classification token, used as the first token for classification
-                vocab.Add("[SEP]", 103); // Separator token, used to separate sequences or sentences
-                vocab.Add("[MASK]", 104); // Mask token, used for masked language modeling tasks.
-                vocab.Add("[BOS]", 105); // Beginning  of Sequence tokens, used to mark the start and end of a sequence.
-                vocab.Add("[EOS]", 106); // End of Sequence tokens, used to mark the start and end of a sequence.
-                for (int i = 107; i < 1000; i++)
-                {
-                    vocab.Add($"example{i}", i);
-                }*/
-                vocab.Add("[PAD]", 0);
-                vocab.Add("[UNK]", 1);
-                vocab.Add("[CLS]", 2);
-                vocab.Add("[SEP]", 3);
-                vocab.Add("[MASK]", 4);
-                vocab.Add("[BOS]", 5);
-                vocab.Add("[EOS]", 6);
-
-                int maxLength = 2; // можно брать и какое-то иное число под определенные потребности
-
-                //_tokenizer = new Tokenizer(vocab, maxLength);
-                _tokenizer = new BertTokenizer(vocab, 512); // max sequence length
-
+                _tokenizer = TikToken.EncodingForModel("gpt-3.5-turbo");
+                _messages.Add(("Привет! Я Qwen1.5 работаю на твоём крутом девайсе. Спроси что-нибудь!", false));
+                RedrawChat();
             }
             catch (Exception ex)
             {
-                // Обработка ошибок инициализации
-                System.Diagnostics.Debug.WriteLine($"Ошибка загрузки модели: {ex.Message}");
-            }//
+                Debug.WriteLine(ex.Message);
+                _messages.Add(($"Ошибка: {ex.Message}", false));
+                RedrawChat();
+            }
         }
 
-        private string GenerateResponse(string input)
+        private async void SendButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_session == null || _tokenizer == null)
-                return "Модель не загружена";
+            if (string.IsNullOrWhiteSpace(InputBox.Text))
+                return;
+
+            var userMessage = InputBox.Text;
+            InputBox.Text = "";
+            _messages.Add((userMessage, true));
+            RedrawChat();
+
+            IsGenerating = true;
+            Bindings.Update();
 
             try
             {
-                // Токенизация входного текста
-                long[] tokens = _tokenizer.Encode(input);
+                var response = await GenerateResponseAsync(userMessage);
+                _messages.Add((response, false));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex.Message);
+                _messages.Add(($"Ошибка генерации: {ex.Message}", false));
+            }
+            finally
+            {
+                IsGenerating = false;
+                Bindings.Update();
+                RedrawChat();
+            }
+        }
 
-                // Подготовка входных данных для модели (Создаем тензоры ONNX)
-                //DenseTensor<long> inputTensor = new DenseTensor<long>(tokens, true);
-                //DenseTensor<long> attentionMaskTensor = new DenseTensor<long>(tokens, true);
+        private async Task<string> GenerateResponseAsync(string prompt)
+        {
+            var session = App.Session;
+            if (session == null) throw new InvalidOperationException("Модель не загружена");
 
-                // call: DenseTensor(Memory<T> memory, ReadOnlySpan<int> dimensions, bool reverseStride = false)
-                DenseTensor<long> inputTensor = new DenseTensor<long>(default, tokens.Select(t => (int)t).ToArray(), false);
-                DenseTensor<long> attentionMaskTensor = new DenseTensor<long>(default, tokens.Select(t => (int)t).ToArray(), false);
-                //long[,] attentionMask = new long[0, tokens.Length];
+            // Токенизация с форматом Qwen
+            var promptTokens = new List<int> { 151644, 8948, 198 }; // <|im_start|>user
+            promptTokens.AddRange(_tokenizer.Encode(prompt));
+            promptTokens.AddRange(new[] { 151645, 198 }); // <|im_end|>\n
+            promptTokens.AddRange(new[] { 151644, 77091, 198 }); // <|im_start|>assistant
 
+            var inputTensor = new DenseTensor<long>(
+                new[] { 1, promptTokens.Count },
+                false//new[] { 1, promptTokens.Count }
+             );
 
-                // Создаем входные данные для модели
-                List<NamedOnnxValue> inputs = new List<NamedOnnxValue>
+            for (int i = 0; i < promptTokens.Count; i++)
+            {
+                inputTensor[0, i] = promptTokens[i];
+            }
+
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input_ids", inputTensor),
+                NamedOnnxValue.CreateFromTensor("position_ids", new DenseTensor<long>(new[] { 1, promptTokens.Count }, false)),
+                NamedOnnxValue.CreateFromTensor("attention_mask", new DenseTensor<long>(new[] { 1, promptTokens.Count }, false)),
+                //NamedOnnxValue.CreateFromTensor("past_key_values", new DenseTensor<float>(new[] { 1, 0, 0, 0, 0, 0 }, false)) // Пустой past_key_values
+                NamedOnnxValue.CreateFromTensor("past_key_values.0.key", new DenseTensor<long>(new[] { 1, promptTokens.Count }, false)),
+            };
+
+            // Конфиг генерации
+            const int maxLength = 100;
+            var outputTokens = new List<long>();
+
+            for (int i = 0; i < maxLength; i++)
+            {
+                using (var results = session.Run(inputs))
+                {    
+                   var logits = results.First().AsTensor<float>();
+
+                    // Жадное декодирование
+                    long nextToken = ArgMax(logits, inputTensor.Dimensions[1] - 1);
+
+                    // Конец генерации
+                    if (nextToken == 151645) break; // <|im_end|>
+
+                    outputTokens.Add(nextToken);
+
+                    // Обновляем входные данные
+                    var newDims = new[] { 1, inputTensor.Dimensions[1] + 1 };
+                    var newInputTensor = new DenseTensor<long>(newDims);
+
+                    for (int j = 0; j < inputTensor.Length; j++)
+                    {
+                        //newInputTensor.Buffer[j] = inputTensor.Buffer[j];
+                        newInputTensor.Buffer.Span[j] = inputTensor.Buffer.Span[j];
+                    }
+
+                    //newInputTensor.Buffer[inputTensor.Length] = nextToken;
+                    newInputTensor.Buffer.Span[(int)inputTensor.Length] = nextToken;
+                    inputTensor = newInputTensor;
+
+                    inputs[0] = NamedOnnxValue.CreateFromTensor("input_ids", inputTensor);
+               }
+            }
+
+            //return _tokenizer.Decode(outputTokens.ToArray());
+            //return _tokenizer.Decode(outputTokens.Select(x => (int)x).ToArray());
+            return _tokenizer.Decode(outputTokens.Select(x => (int)x).ToList());
+        }
+
+        private static long ArgMax(Tensor<float> logits, int lastIndex)
+        {
+            float[] logitsArray = logits.ToArray();
+            var slice = logitsArray.Skip(lastIndex * logits.Dimensions[2]).Take(logits.Dimensions[2]).ToArray();
+
+            float max = float.MinValue;
+            long maxIndex = 0;
+
+            for (int i = 0; i < slice.Length; i++)
+            {
+                if (slice[i] > max)
                 {
-                    NamedOnnxValue.CreateFromTensor("input_ids", inputTensor),
-                    NamedOnnxValue.CreateFromTensor("attention_mask", attentionMaskTensor)
+                    max = slice[i];
+                    maxIndex = i;
+                }
+            }
+            return maxIndex;
+        }
+
+        private void RedrawChat() => ChatCanvas.Invalidate();
+
+        private void ChatCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
+        {
+            using (var session = args.DrawingSession)
+            {
+
+                session.Clear(Colors.Transparent);
+
+                var y = 10f;
+                var textFormat = new CanvasTextFormat
+                {
+                    FontSize = 14,
+                    WordWrapping = CanvasWordWrapping.Wrap
                 };
 
-                using (var results = _session.Run(inputs))
+                foreach (var (msg, isUser) in _messages)
                 {
-                    // Получение выходных данных
-                    Tensor<float> output = results.FirstOrDefault(r => r.Name == "logits")?.AsTensor<float>();
-                    if (output != null)
-                    {
-                        // Декодирование результата (упрощенная версия)
-                        long[] responseTokens = new long[] { 100, 200, 300 }; // Пример
-                        return _tokenizer.Decode(responseTokens);
-                    }
-                }              
+                    var color = isUser ? Colors.DodgerBlue : Colors.Green;
+                    var layout = new CanvasTextLayout(session, msg, textFormat,
+                        (float)(sender.ActualWidth - 20), 0);
+
+                    session.DrawTextLayout(layout, 10, y, color);
+                    y += (float)layout.LayoutBounds.Height + 10;
+                }
+
+                _textLayout?.Dispose();
+                _textLayout = null;
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Ошибка генерации ответа: {ex.Message}");
-            }
-
-            return "Извините, произошла ошибка при генерации ответа";
-        }//
-
-
-        private void SendButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!string.IsNullOrWhiteSpace(InputTextBox.Text))
-            {
-                // Показываем вопрос пользователя
-                ResponseTextBlock.Text = $"Вы: {InputTextBox.Text}\n\n";
-
-                // Генерируем ответ
-                var response = GenerateResponse(InputTextBox.Text);
-
-                // Показываем ответ модели
-                ResponseTextBlock.Text += $"UniAli: {response}";
-
-                // Очищаем поле ввода
-                InputTextBox.Text = string.Empty;
-            }//
         }
-
-        private void InputTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
-        {
-            if (e.Key == Windows.System.VirtualKey.Enter)
-            {
-                SendButton_Click(sender, e);
-            }
-        }//
-
     }
 }
