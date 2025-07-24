@@ -6,7 +6,7 @@
 
 ## Скриншот
 ![](Images/sshot01.png)
-
+![](Images/sshot02.png)
 
 ## Status
 - Лишь набросок, пока тож не пашет
