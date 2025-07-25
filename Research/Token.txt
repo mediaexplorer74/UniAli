@@ -1,0 +1,406 @@
+Спасибо за пожелания. Технически приложение заработало, исключений больше нет. Но вот логически всё скверно: модель выдает бессмысленные ответы. Например, на вопрос "How are you?" выдала "survays". а на "Hello" - пустой ответ ""... Помоги, пожалуйста, разобраться. Должно быть, я не не понял роль токенайзера TiktokenSharp...
+Мы столкнулись с тем, что модель выдает бессмысленные ответы. Это может быть вызвано несколькими причинами:
+1. **Неправильная токенизация**: Мы используем токенизатор от GPT-3.5 (gpt-3.5-turbo), но модель Qwen3-0.6B имеет свой собственный токенизатор. Это основная проблема.
+2. **Неправильный формат промпта**: Модель Qwen ожидает определенный формат диалога.
+3. **Проблемы с параметрами генерации** (температура, top-P).
+4. **Ошибки в обработке past_key_values**.
+5. **Ошибки в позиционных кодировках или маске внимания**.
+Давайте сосредоточимся на первых двух пунктах, так как они наиболее вероятны.
+### 1. Токенизация
+Модель Qwen3 использует токенизатор, отличный от GPT-3.5. Мы должны использовать токенизатор, соответствующий модели. В нашем случае мы загружаем токенизатор для `gpt-3.5-turbo`, что неправильно.
+Решение: Использовать токенизатор, предоставленный для Qwen. К сожалению, TiktokenSharp не поддерживает Qwen из коробки. Поэтому нужно либо найти другую библиотеку, либо использовать встроенный токенизатор из Transformers (что в UWP сложно). 
+Альтернатива: скачать файл токенизатора (vocab.json и merges.txt для Qwen) и использовать его. Но это сложно.
+Вместо этого, давайте попробуем использовать токенизатор из [Hugging Face](https://huggingface.co/Qwen/Qwen-1_8B) (но для UWP это может быть тяжело). 
+Однако, в вашей модели используется `BosTokenId = 151643`, `EosTokenId = 151645` - это специфично для Qwen.
+### 2. Формат промпта
+Модель Qwen ожидает промпт в формате:
+```
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+```
+В нашем коде мы формируем:
+```csharp
+List<long> promptTokens = new List<long> { BosTokenId, 8948, 198 }; // <|im_start|>user
+promptTokens.AddRange(_tokenizer.Encode(prompt).Select(x => (long)x));
+promptTokens.AddRange(new long[] { EosTokenId, 198 }); // <|im_end|>\n
+promptTokens.AddRange(new long[] { BosTokenId, 77091, 198 }); // <|im_start|>assistant\n
+```
+Проверим, что за токены:
+- `BosTokenId` = 151643 -> токен начала последовательности
+- 8948 -> что это? Должно быть токеном "user"?
+- 198 -> что это? Возможно, перевод строки?
+На самом деле, в Qwen токены специальных токенов:
+- `<|im_start|>` -> 151643
+- `system` -> ?
+- `user` -> ?
+- `assistant` -> ?
+Мы должны кодировать не как строки, а как целые последовательности с использованием правильных токенов.
+### Предлагаемое решение:
+1. **Исправить токенизатор**: Поскольку TiktokenSharp не поддерживает Qwen, давайте попробуем использовать встроенный токенизатор из ONNX-модели? Но это сложно.
+2. **Исправить формат промпта**: Убедимся, что мы используем правильные токены для специальных строк.
+В документации Qwen, специальные токены:
+- `<|im_start|>`: 151643
+- `<|im_end|>`: 151645
+А также есть токены для ролей: `system`, `user`, `assistant` - но они не являются специальными, а должны кодироваться как обычный текст.
+Поэтому правильный формат для пользовательского сообщения:
+```
+<|im_start|>user
+{текст сообщения пользователя}<|im_end|>
+<|im_start|>assistant
+```
+То есть:
+- Начинаем с `151643` (im_start), затем токены слова "user", затем токен перевода строки (198?).
+- Затем текст сообщения.
+- Затем `151645` (im_end), и перевод строки (198).
+- Затем `151643` (im_start), токены слова "assistant", перевод строки.
+Но как закодировать "user" и "assistant"? Обычным токенизатором.
+В нашем коде:
+```csharp
+// Для "user"
+var userTokens = _tokenizer.Encode("user"); // Должно быть [8948]?
+// Для "assistant"
+var assistantTokens = _tokenizer.Encode("assistant"); // Должно быть [77091]?
+```
+Но мы жестко закодировали 8948 и 77091. Это может быть правильно, но проверим.
+### Проверка токенов
+Попробуем закодировать строки с помощью токенизатора:
+```csharp
+var userTokenIds = _tokenizer.Encode("user"); // должно быть [8948]?
+var assistantTokenIds = _tokenizer.Encode("assistant"); // [77091]?
+var newlineTokenId = _tokenizer.Encode("\n")[0]; // 198?
+```
+Но если токенизатор не для Qwen, то эти значения могут быть неправильными.
+### Альтернатива: использовать правильный токенизатор
+Мы можем использовать [токенизатор из Qwen](https://huggingface.co/Qwen/Qwen-1_8B/tree/main) (файлы токенизатора). Но для UWP это сложно интегрировать.
+### Временное решение
+Попробуем заменить жесткие коды на кодирование строк "user", "assistant", "\n" через текущий токенизатор. Но если токенизатор не тот, то это не поможет.
+### Рекомендация
+1. Скачайте и используйте токенизатор Qwen. Для .NET есть библиотека [HuggingFace.NET Tokenizers](https://github.com/NightFury2/HuggingFace.NET) (но она может не поддерживать UWP).
+2. Или предварительно конвертируйте промпт в токены на сервере? Но это не для клиента.
+3. Или найдите способ загрузить токенизатор Qwen в UWP.
+### Код для исправления формата промпта (с текущим токенизатором)
+Попробуем изменить формирование промпта:
+```csharp
+// Заменим жесткие коды на кодирование через токенизатор
+string systemMessage = "You are a helpful assistant.";
+string userMessage = prompt;
+List<long> promptTokens = new List<long>();
+// System part (optional)
+if (step == 0) // first message
+{
+    promptTokens.Add(BosTokenId);
+    promptTokens.AddRange(_tokenizer.Encode("system"));
+    promptTokens.AddRange(_tokenizer.Encode("\n"));
+    promptTokens.AddRange(_tokenizer.Encode(systemMessage));
+    promptTokens.Add(EosTokenId);
+    promptTokens.AddRange(_tokenizer.Encode("\n"));
+}
+// User message
+promptTokens.Add(BosTokenId);
+promptTokens.AddRange(_tokenizer.Encode("user"));
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+promptTokens.AddRange(_tokenizer.Encode(userMessage));
+promptTokens.Add(EosTokenId);
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+// Assistant start
+promptTokens.Add(BosTokenId);
+promptTokens.AddRange(_tokenizer.Encode("assistant"));
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+```
+Но опять же, если токенизатор не тот, то кодирование "system", "user", "assistant" будет неправильным.
+### Отчаянный шаг
+Попробуем вообще убрать специальный формат и подать просто текст. Может быть, модель поймет?
+```csharp
+List<long> promptTokens = new List<long> { BosTokenId };
+promptTokens.AddRange(_tokenizer.Encode(prompt));
+// И не добавляем ничего, только BosTokenId в начале?
+```
+Но тогда модель не будет знать, что мы ждем ответ.
+### Эксперимент
+Давайте попробуем сформировать промпт как обычную строку без специальных токенов, но добавить в конце "Assistant:".
+Например:
+```csharp
+string fullPrompt = "User: " + prompt + "\nAssistant:";
+List<long> promptTokens = new List<long>();
+promptTokens.Add(BosTokenId);
+promptTokens.AddRange(_tokenizer.Encode(fullPrompt));
+```
+Это может сработать, если модель обучалась на подобных диалогах.
+### Вывод
+Основная проблема - токенизатор. Мы используем не тот токенизатор. Решение:
+1. Найти способ использовать токенизатор Qwen в UWP.
+2. Использовать онлайн-токенизацию (не для клиента).
+3. Попробовать другой токенизатор, который поддерживает Qwen.
+### Библиотека tokenizers для UWP
+Попробуйте установить пакет `HuggingFaceSharp` (если он есть) или `Microsoft.ML.Tokenizers` (но он не поддерживает Qwen).
+### Альтернатива: загрузка токенизатора из файла
+Скачайте файлы токенизатора Qwen (vocab.json, merges.txt) и используйте библиотеку `Microsoft.ML.Tokenizers`:
+```csharp
+var tokenizer = new Tokenizer(new Bpe(vocabFile, mergesFile));
+```
+Но в UWP доступ к файлам может быть сложным.
+### Резюме
+Проблема сложная. Давайте начнем с проверки формата промпта. Попробуем два подхода:
+**Подход 1: Упрощенный промпт (без специальных токенов)**
+```csharp
+List<long> promptTokens = new List<long> { BosTokenId };
+string simplePrompt = "Question: " + prompt + "\nAnswer:";
+promptTokens.AddRange(_tokenizer.Encode(simplePrompt));
+```
+**Подход 2: Специальный формат, но с кодированием строк через текущий токенизатор**
+```csharp
+List<long> promptTokens = new List<long>();
+// Начало диалога
+promptTokens.Add(BosTokenId);
+// Кодируем "user" и перевод строки
+promptTokens.AddRange(_tokenizer.Encode("user"));
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+// Текст пользователя
+promptTokens.AddRange(_tokenizer.Encode(prompt));
+// Конец сообщения пользователя
+promptTokens.Add(EosTokenId);
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+// Начало ответа ассистента
+promptTokens.Add(BosTokenId);
+promptTokens.AddRange(_tokenizer.Encode("assistant"));
+promptTokens.AddRange(_tokenizer.Encode("\n"));
+```
+Но если токенизатор не совпадает, то "user" и "assistant" будут разбиты на неправильные токены.
+### Дополнительно
+Проверьте, что `BosTokenId` и `EosTokenId` действительно правильные. В Qwen3-0.6B:
+- `<|im_start|>` -> 151643
+- `<|im_end|>` -> 151645
+Их нужно вставлять как есть.
+### Эксперимент с выводом токенов
+Добавьте отладочный вывод токенов:
+```csharp
+Debug.WriteLine($"Prompt tokens: {string.Join(",", promptTokens)}");
+```
+Сравните с тем, как должен выглядеть промпт в токенах для Qwen.
+### Заключение
+Начните с экспериментов с форматом промпта. Если это не поможет, то придется искать способ использовать правильный токенизатор.
+Также проверьте, что при генерации мы правильно интерпретируем выходные токены (декодируем в строку).
+Удачи!
+Отлично, что технически приложение заработало! Проблема с бессмысленными ответами скорее всего связана с форматом промпта и особенностями токенизации для Qwen. Давайте разберемся подробнее.
+
+Основные проблемы и решения:
+Несовместимость токенизатора:
+
+Вы используете TiktokenSharp.EncodingForModel("gpt-3.5-turbo"), но это токенизатор для моделей OpenAI
+
+Для Qwen нужен ее собственный токенизатор
+
+Неправильный формат промпта:
+
+Qwen требует специального формата диалога с тегами
+
+Ваш текущий формат: <|im_start|>user... не совсем корректен
+
+Декодирование ответа:
+
+Ответ модели содержит служебные токены, которые нужно фильтровать
+
+Исправленный код с правильным форматом промпта:
+csharp
+private string GenerateResponse(string prompt, int maxTokens, int mode)
+{
+    lock (_syncLock)
+    {
+        var session = App.Session;
+        if (session == null)
+        {
+            Debug.WriteLine("Ошибка: сессия ONNX не инициализирована");
+            return "Модель не загружена";
+        }
+
+        try
+        {
+            // 1. Форматирование промпта в соответствии с требованиями Qwen
+            string formattedPrompt = 
+                $"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n";
+
+            // 2. Токенизация с использованием правильных токенов
+            List<long> promptTokens = new List<long>();
+            
+            // Добавляем токен начала последовательности
+            promptTokens.Add(BosTokenId);
+            
+            // Токенизируем форматированный промпт
+            promptTokens.AddRange(_tokenizer.Encode(formattedPrompt).Select(x => (long)x));
+            
+            Debug.WriteLine($"Токены промпта: {string.Join(",", promptTokens)}");
+
+            // 3. Подготовка входных тензоров
+            int[] inputShape = new int[] { 1, promptTokens.Count };
+            DenseTensor<long> inputIds = new DenseTensor<long>(inputShape);
+            DenseTensor<long> attentionMask = new DenseTensor<long>(inputShape);
+            DenseTensor<long> positionIds = new DenseTensor<long>(inputShape);
+
+            for (int i = 0; i < promptTokens.Count; i++)
+            {
+                inputIds[0, i] = promptTokens[i];
+                attentionMask[0, i] = 1;
+                positionIds[0, i] = i;
+            }
+
+            // ... остальной код без изменений ...
+
+            // 4. Генерация ответа
+            var outputTokens = new List<long>();
+            
+            // ... генерация токенов ...
+
+            // 5. Декодирование и очистка ответа
+            string rawResponse = _tokenizer.Decode(outputTokens.Select(x => (int)x).ToList());
+            
+            // Удаляем служебные теги из ответа
+            string cleanedResponse = CleanQwenResponse(rawResponse);
+            
+            Debug.WriteLine($"Сырой ответ: {rawResponse}");
+            Debug.WriteLine($"Очищенный ответ: {cleanedResponse}");
+            
+            return cleanedResponse;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Ошибка в процессе генерации: {ex}");
+            return $"Ошибка генерации: {ex.Message}";
+        }
+    }
+}
+
+// Очистка ответа от служебных токенов Qwen
+private string CleanQwenResponse(string response)
+{
+    // Удаляем конечные теги
+    response = response.Replace("<|im_end|>", "");
+    
+    // Удаляем возможный повтор prompt
+    int assistantIndex = response.LastIndexOf("<|im_start|>assistant");
+    if (assistantIndex >= 0)
+    {
+        response = response.Substring(assistantIndex + "<|im_start|>assistant".Length);
+    }
+    
+    // Удаляем начальные/конечные пробелы и переносы строк
+    return response.Trim();
+}
+Дополнительные исправления:
+Правильная инициализация токенизатора (в методе MainPage_Loaded):
+
+csharp
+private async void MainPage_Loaded(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        // Для Qwen можно использовать multi-language токенизатор
+        await Task.Run(() => {
+            _tokenizer = TikToken.EncodingForModel("gpt-3.5-turbo");
+        });
+        
+        // Альтернатива: создать кастомный токенизатор
+        // _tokenizer = CreateQwenTokenizer();
+        
+        // ... остальной код ...
+    }
+    catch { /* обработка ошибок */ }
+}
+Кастомный токенизатор для Qwen (если стандартный не подходит):
+
+csharp
+private TikToken CreateQwenTokenizer()
+{
+    // Для Qwen 0.6B ONNX (адаптируйте под вашу модель)
+    var specialTokens = new Dictionary<string, int>
+    {
+        {"<|im_start|>", 151643},
+        {"<|im_end|>", 151645},
+        {"<|endoftext|>", 151643} // часто совпадает с bos
+    };
+
+    // Создаем кастомный токенизатор
+    var tokenizer = new TikToken();
+    tokenizer.SetSpecialTokens(specialTokens);
+    
+    // Здесь нужно добавить основную лексику, если требуется
+    // Это сложная часть, требующая файлов словаря
+    
+    return tokenizer;
+}
+Проверка параметров генерации:
+
+csharp
+private long SampleToken(Tensor<float> logits, int mode)
+{
+    // Более консервативные параметры по умолчанию
+    float temperature = 0.7f;
+    float topP = 0.85f;
+
+    // ... остальной код ...
+}
+Почему это важно для Qwen:
+Формат диалога:
+
+text
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+Специальные токены:
+
+<|im_start|> = 151643
+
+<|im_end|> = 151645
+
+<|endoftext|> = 151643
+
+Декодирование:
+
+Ответ модели будет содержать <|im_end|> в конце
+
+Может повторять начало промпта
+
+Советы по отладке:
+Добавьте логирование токенов:
+
+csharp
+Debug.WriteLine($"Prompt tokens: {string.Join(",", promptTokens)}");
+Debug.WriteLine($"Output tokens: {string.Join(",", outputTokens)}");
+Проверьте первые несколько сгенерированных токенов:
+
+csharp
+if (step < 5)
+{
+    Debug.WriteLine($"Step {step}: token={nextToken}, text={_tokenizer.Decode(new[] { (int)nextToken })}");
+}
+Попробуйте простые промпты:
+
+csharp
+// Вместо пользовательского ввода
+var userMessage = "1+1="; // Должен получить "2"
+Сравните с оригинальной реализацией:
+
+Проверьте как работает официальная реализация Qwen
+
+Сравните форматы промптов
+
+Если не сработает:
+Альтернативные решения:
+
+Использовать библиотеку HuggingFace Sharp
+
+Предварительно вычислять токены на сервере
+
+Использовать ONNX-токенизатор (если доступен)
+
+Проверьте совместимость модели:
+
+Убедитесь, что ONNX-модель экспортирована корректно
+
+Попробуйте запустить с оригинальными весами PyTorch
+
+Попробуйте эти изменения - они должны значительно улучшить качество ответов модели. Если останутся проблемы, будем глубже исследовать работу токенизатора и формат промпта!

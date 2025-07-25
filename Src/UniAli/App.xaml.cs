@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -34,33 +34,50 @@ namespace UniAli
         {
             try
             {
-                var modelFile = await Package.Current.InstalledLocation.GetFileAsync
-                    (
-                    //@"Assets\qwen1.5-1.7B-q4f16.ort"
-                    //@"Assets\alibaba-model.onnx"
-                     @"Assets\model_q4f16.onnx"
-                    );
-                
+                var modelFile = await Package.Current.InstalledLocation.GetFileAsync(
+                    @"Assets\model_q5.onnx");
+
+                // Configure session options for better performance
                 var sessionOptions = new SessionOptions
                 {
                     ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-                    GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC,
-                    EnableCpuMemArena = true
+                    GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                    EnableCpuMemArena = true,
+                    EnableMemoryPattern = true
                 };
-                
-                // Для ARMv8 оптимизация
-                sessionOptions.AddSessionConfigEntry("session.disable_prepacking", "1");
-                
+
+                // Set execution provider - try CUDA first, fall back to CPU
+                //try
+                //{
+                //    sessionOptions.AppendExecutionProvider_CUDA();
+                //    Debug.WriteLine("CUDA execution provider initialized");
+                //}
+                //catch (Exception ex)
+                //{
+                //    Debug.WriteLine($"CUDA not available, falling back to CPU: {ex.Message}");
+                    sessionOptions.AppendExecutionProvider_CPU();
+                //}
+
+                // Disable memory pattern for better compatibility
+                sessionOptions.EnableMemoryPattern = false;
+
+                // Load the model
                 Session = new InferenceSession(modelFile.Path, sessionOptions);
+
+                // Log model input/output info for debugging
+                foreach (var input in Session.InputMetadata)
+                {
+                    //Debug.WriteLine($"Input: {input.Key}, Type: {input.Value.ElementType}, Dimensions: {string.Join(",", input.Value.Dimensions)}");
+                }
             }
             catch (Exception ex)
             {
-                // Обработка ошибок
+                // ��������� ������
                 Debug.WriteLine("[ex] App exception: " + ex.Message);
             }
         }
 
-        
+
         /// <summary>
         /// Invoked when the application is launched normally by the end user.  Other entry points
         /// will be used such as when the application is launched to open a specific file.
